@@ -9,7 +9,20 @@ const includeRoutes = ref(true)
 const includeComments = ref(false)
 
 function print() {
+  if (store.stalePrintJobs.length) {
+    ElMessage.warning('有打印清单已失效，请重新核对后再输出')
+  }
   window.print()
+}
+
+function generate() {
+  const job = store.generatePrintJob({ notes: includeNotes.value, routes: includeRoutes.value, comments: includeComments.value })
+  ElMessage.success(`打印清单 ${job.id} 已生成`)
+}
+
+function recheck(jobId: string) {
+  store.recheckPrintJob(jobId)
+  ElMessage.success('已按当前基线 / 确认状态 / 时间码重新核对，清单恢复有效')
 }
 
 function exportCsv() {
@@ -47,8 +60,37 @@ function exportCsv() {
       </div>
       <div class="actions">
         <el-button @click="exportCsv">导出 CSV</el-button>
+        <el-button type="primary" plain @click="generate">生成打印清单</el-button>
         <el-button type="primary" @click="print">打印 / 导出 PDF</el-button>
       </div>
+    </div>
+
+    <el-alert
+      v-if="store.stalePrintJobs.length"
+      class="stale-alert no-print"
+      type="error"
+      show-icon
+      :closable="false"
+      :title="`${store.stalePrintJobs.length} 份打印清单已失效`"
+      description="演出基线、确认状态或时间码已变化，受影响的清单需重新核对后再输出。"
+    />
+
+    <div v-if="store.printJobs.length" class="print-jobs panel no-print">
+      <strong>已生成清单</strong>
+      <div v-for="job in store.printJobs" :key="job.id" class="job-row" :class="{ stale: store.isPrintJobStale(job) }">
+        <span class="job-id">{{ job.id }}</span>
+        <span class="job-label">{{ job.label }}</span>
+        <span class="job-meta">{{ job.revision }} · {{ job.cueCount }} 个节点 · {{ job.createdAt }}</span>
+        <el-tag :type="store.isPrintJobStale(job) ? 'danger' : 'success'" size="small" effect="plain">
+          {{ store.isPrintJobStale(job) ? '已失效' : '有效' }}
+        </el-tag>
+        <el-button v-if="store.isPrintJobStale(job)" size="small" type="warning" plain @click="recheck(job.id)">重新核对</el-button>
+      </div>
+    </div>
+
+    <div v-if="store.recheckCommentCount" class="recheck-banner panel no-print">
+      <strong>{{ store.recheckCommentCount }} 条留言待办需重新核对</strong>
+      <span class="muted">基线 / 确认状态 / 时间码变化后，相关已解决留言已失效，请到舞台工作区逐条核对。</span>
     </div>
 
     <div class="print-options panel no-print">
@@ -112,6 +154,71 @@ function exportCsv() {
 <style scoped>
 .print-page {
   background: #e8ecee;
+}
+
+.stale-alert {
+  margin-bottom: 12px;
+}
+
+.print-jobs {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 12px 15px;
+}
+
+.print-jobs > strong {
+  font-size: 13px;
+}
+
+.job-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid #e2e8ea;
+  border-radius: 6px;
+  background: #f8fafa;
+  font-size: 12px;
+}
+
+.job-row.stale {
+  border-color: #ecc5b8;
+  background: #fdf3ef;
+}
+
+.job-id {
+  color: #1d7371;
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+}
+
+.job-label {
+  color: #37444e;
+}
+
+.job-meta {
+  margin-left: auto;
+  color: #8a959d;
+  font-size: 11px;
+}
+
+.recheck-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 10px 15px;
+  border-left: 3px solid #d8912d;
+  font-size: 12px;
+}
+
+.recheck-banner strong {
+  color: #9a6413;
+}
+
+.recheck-banner .muted {
+  color: #74818c;
 }
 
 .print-options {

@@ -11,7 +11,7 @@ const acts = ['全部', '第一幕', '第二幕', '第三幕']
 
 const cue = computed(() => store.selectedCue)
 const routePoints = computed(() => cue.value?.route.map((point) => `${point.x},${point.y}`).join(' ') ?? '')
-const conflictCues = computed(() => new Set(store.conflicts.map((item) => item.id)))
+const conflictCues = computed(() => new Set(store.timingConflicts.map((item) => item.id)))
 
 function selectCue(item: Cue) {
   store.selectedId = item.id
@@ -27,9 +27,23 @@ function addWaypoint(event: MouseEvent) {
   ElMessage.success('已追加路线节点')
 }
 
-function saveCue() {
-  localStorage.setItem('stage-scheduler-last-action', new Date().toISOString())
-  ElMessage.success(store.isOffline ? '已保存到离线草稿' : `已同步 ${store.revision}`)
+async function saveCue() {
+  if (store.isOffline) {
+    ElMessage.success('已保存到离线草稿，回网后自动合并')
+    return
+  }
+  const ok = await store.syncNow()
+  if (!ok) {
+    ElMessage.warning(store.lastSyncError || '同步失败，批次已保留')
+    return
+  }
+  if (store.lastSyncDedup) ElMessage.info('同号批次已去重，未生成重复版本')
+  if (store.pendingConflicts.length) {
+    ElMessage.warning(`已合并，${store.pendingConflicts.length} 项冲突待裁决`)
+    store.conflictResolverOpen = true
+  } else {
+    ElMessage.success(`已同步至云端 R${store.syncedRev}`)
+  }
 }
 
 function submitComment() {
@@ -55,17 +69,19 @@ function updateCue(key: keyof Cue, value: unknown) {
       <div class="actions">
         <el-button :disabled="!store.canUndo || store.locked" @click="store.undo()">撤销</el-button>
         <el-button :disabled="!store.canRedo || store.locked" @click="store.redo()">重做</el-button>
-        <el-button type="primary" @click="saveCue">{{ store.isOffline ? '保存草稿' : '同步版本' }}</el-button>
+        <el-button type="primary" :loading="store.syncing" @click="saveCue">
+          {{ store.isOffline ? '保存草稿' : store.outbox ? '重试同步' : '同步版本' }}
+        </el-button>
       </div>
     </div>
 
     <el-alert
-      v-if="store.conflicts.length"
+      v-if="store.timingConflicts.length"
       class="conflict-alert"
       type="warning"
       show-icon
       :closable="false"
-      :title="`发现 ${store.conflicts.length} 个同时触发节点`"
+      :title="`发现 ${store.timingConflicts.length} 个同时触发节点`"
       description="系统已高亮冲突提示，请在右侧检查触发时间与部门优先级。"
     />
 
@@ -186,8 +202,11 @@ function updateCue(key: keyof Cue, value: unknown) {
                   <time>{{ comment.createdAt }}</time>
                 </div>
                 <p>{{ comment.content }}</p>
+                <el-tag v-if="comment.recheck && !comment.resolved" class="recheck-tag" size="small" type="danger" effect="plain">
+                  基线 / 时间码已变 · 需重新核对
+                </el-tag>
                 <el-button link type="primary" @click="store.toggleComment(comment.id)">
-                  {{ comment.resolved ? '重新打开' : '标记解决' }}
+                  {{ comment.resolved ? '重新打开' : comment.recheck ? '核对并解决' : '标记解决' }}
                 </el-button>
               </div>
               <el-empty v-if="cue.comments.length === 0" description="暂无留言" :image-size="46" />
@@ -494,6 +513,10 @@ function updateCue(key: keyof Cue, value: unknown) {
   margin: 6px 0 3px;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.recheck-tag {
+  margin: 4px 6px 2px 0;
 }
 
 .comment-input {

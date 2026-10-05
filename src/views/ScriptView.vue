@@ -21,8 +21,12 @@ function confirmCue(id: string) {
 }
 
 function lock() {
-  store.lockBaseline()
-  ElMessage.success('演出基线已锁定，后续修改将从新分支开始')
+  if (store.lockBaseline()) {
+    ElMessage.success('演出基线已锁定，后续修改将从新分支开始')
+  } else {
+    ElMessage.warning('还有未裁决的合并冲突，不能进入演出基线')
+    store.conflictResolverOpen = true
+  }
 }
 </script>
 
@@ -35,11 +39,23 @@ function lock() {
         <p class="muted">提示与走位按时间码串联；未确认节点不会进入锁定基线。</p>
       </div>
       <div class="actions">
-        <el-button :disabled="store.locked" @click="lock">锁定演出基线</el-button>
+        <el-button :disabled="store.locked || store.hasPendingConflicts" @click="lock">锁定演出基线</el-button>
         <el-button v-if="store.locked" type="warning" plain @click="store.unlockBaseline">解锁修订</el-button>
         <el-button type="primary" @click="$router.push('/print')">生成执行清单</el-button>
       </div>
     </div>
+
+    <el-alert
+      v-if="store.hasPendingConflicts"
+      class="merge-alert"
+      type="error"
+      show-icon
+      :closable="false"
+      :title="`${store.pendingConflicts.length} 项合并冲突未裁决，裁决完成前不能进入演出基线`"
+      description="离线期间同一走位或留言被两边改过，两版都已保留，请逐条裁决。"
+    >
+      <el-button size="small" type="danger" plain @click="store.conflictResolverOpen = true">前往裁决</el-button>
+    </el-alert>
 
     <div class="panel script-toolbar">
       <el-input v-model="query" clearable placeholder="搜索提示、角色或说明" style="max-width: 320px" />
@@ -119,6 +135,10 @@ function lock() {
 </template>
 
 <style scoped>
+.merge-alert {
+  margin-bottom: 14px;
+}
+
 .script-toolbar {
   display: flex;
   align-items: center;

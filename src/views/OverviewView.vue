@@ -38,6 +38,9 @@ const nextCues = computed(() => [...store.cues].sort((a, b) => a.time.localeComp
         <p class="muted">{{ project.venue }} · 排练日 {{ project.rehearsalDate }} · {{ project.company }}</p>
       </div>
       <div class="actions">
+        <el-button v-if="store.pendingConflicts.length" type="warning" @click="store.conflictResolverOpen = true">
+          {{ store.pendingConflicts.length }} 项冲突待裁决
+        </el-button>
         <el-button @click="store.toggleOffline">{{ store.isOffline ? '恢复在线' : '模拟离线' }}</el-button>
         <el-button type="primary" @click="$router.push('/stage')">进入舞台工作区</el-button>
       </div>
@@ -98,10 +101,10 @@ const nextCues = computed(() => [...store.cues].sort((a, b) => a.time.localeComp
             <strong>{{ item.count }}</strong>
           </div>
         </div>
-        <div class="conflict-card" :class="{ ok: store.conflicts.length === 0 }">
-          <strong>{{ store.conflicts.length ? `发现 ${store.conflicts.length} 项潜在冲突` : '未发现时间冲突' }}</strong>
-          <p>{{ store.conflicts.length ? '同一场景存在同时触发的提示，请在舞台工作区核对优先级。' : '当前提示的时间与场景编排一致。' }}</p>
-          <el-button v-if="store.conflicts.length" text type="warning" @click="$router.push('/stage')">定位冲突</el-button>
+        <div class="conflict-card" :class="{ ok: store.timingConflicts.length === 0 }">
+          <strong>{{ store.timingConflicts.length ? `发现 ${store.timingConflicts.length} 项潜在冲突` : '未发现时间冲突' }}</strong>
+          <p>{{ store.timingConflicts.length ? '同一场景存在同时触发的提示，请在舞台工作区核对优先级。' : '当前提示的时间与场景编排一致。' }}</p>
+          <el-button v-if="store.timingConflicts.length" text type="warning" @click="$router.push('/stage')">定位冲突</el-button>
         </div>
       </section>
     </div>

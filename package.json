@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 62044",
     "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 62044"
+    "preview": "vite preview --host 0.0.0.0 --port 62044",
+    "test:sync": "esbuild scripts/sync.itest.mts --bundle --platform=node --format=esm --packages=external --outfile=node_modules/.cache/sync.itest.mjs && node node_modules/.cache/sync.itest.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

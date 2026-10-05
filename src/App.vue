@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useWorkshopStore } from './stores/workshop'
+import ConflictResolver from './components/ConflictResolver.vue'
 
 const route = useRoute()
 const store = useWorkshopStore()
@@ -14,6 +16,33 @@ const nav = [
   { to: '/script', label: '排练脚本', icon: '序' },
   { to: '/print', label: '打印中心', icon: '印' },
 ]
+
+const syncStatusText = computed(() => {
+  if (store.isOffline) return '离线中 · 编辑进入本地批次'
+  if (store.syncing) return '正在同步…'
+  if (store.outbox) return '有批次等待重试'
+  return '协作服务正常'
+})
+
+async function syncNow() {
+  const ok = await store.syncNow()
+  if (!ok) {
+    ElMessage.warning(store.lastSyncError || '同步失败，批次已保留')
+    return
+  }
+  if (store.lastSyncDedup) ElMessage.info('同号批次已去重，未生成重复版本')
+  if (store.pendingConflicts.length) {
+    ElMessage.warning(`已合并，${store.pendingConflicts.length} 项冲突待裁决`)
+    store.conflictResolverOpen = true
+  } else {
+    ElMessage.success(`已同步至云端 R${store.syncedRev}`)
+  }
+}
+
+onMounted(() => {
+  // 刷新/重开页面时，若还有未同步的离线批次或本地改动，回网后立即合并
+  if (!store.isOffline && (store.outbox || store.dirty)) void store.syncNow()
+})
 </script>
 
 <template>
@@ -48,12 +77,30 @@ const nav = [
 
       <div class="side-card">
         <div class="side-card-title">
-          <span class="status-dot" :style="{ background: store.isOffline ? '#d99a2b' : '#45a878' }" />
-          {{ store.isOffline ? '离线草稿已保存' : '协作服务正常' }}
+          <span class="status-dot" :style="{ background: store.isOffline ? '#d99a2b' : store.outbox ? '#d96b45' : '#45a878' }" />
+          {{ syncStatusText }}
         </div>
-        <p>版本 {{ store.revision }} · {{ store.lastSaved }}</p>
-        <button class="ghost-button" @click="store.toggleOffline">
-          {{ store.isOffline ? '恢复连接' : '模拟离线' }}
+        <p>本地 {{ store.revision }} · 云端 R{{ store.syncedRev }}<template v-if="store.lastSyncAt"> · 同步于 {{ store.lastSyncAt }}</template></p>
+        <p v-if="store.outbox" class="outbox-line">离线批次 {{ store.outbox.batchId }} · 已尝试 {{ store.outbox.attempts }} 次</p>
+        <p v-if="store.lastSyncError" class="error-line">{{ store.lastSyncError }}</p>
+        <div class="side-actions">
+          <button class="ghost-button" @click="store.toggleOffline()">
+            {{ store.isOffline ? '恢复连接' : '模拟离线' }}
+          </button>
+          <button class="ghost-button" :disabled="store.isOffline || store.syncing || (!store.dirty && !store.outbox)" @click="syncNow">
+            {{ store.syncing ? '同步中…' : store.outbox ? '重试同步' : '立即同步' }}
+          </button>
+        </div>
+        <label class="fail-sim">
+          <span>故障演练</span>
+          <select v-model="store.simulateFailMode">
+            <option value="none">正常</option>
+            <option value="before">下次失败（未提交）</option>
+            <option value="after-commit">下次失败（已提交丢响应）</option>
+          </select>
+        </label>
+        <button v-if="store.pendingConflicts.length" class="conflict-button" @click="store.conflictResolverOpen = true">
+          {{ store.pendingConflicts.length }} 项合并冲突待裁决
         </button>
       </div>
     </aside>
@@ -61,6 +108,8 @@ const nav = [
     <main class="content">
       <RouterView />
     </main>
+
+    <ConflictResolver />
   </div>
 </template>
 
@@ -162,9 +211,24 @@ const nav = [
 }
 
 .side-card p {
-  margin: 8px 0 11px;
+  margin: 8px 0 0;
   color: #9eb0bc;
   font-size: 11px;
+}
+
+.outbox-line {
+  color: #e8b563 !important;
+}
+
+.error-line {
+  color: #e88f7a !important;
+}
+
+.side-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 11px;
 }
 
 .ghost-button {
@@ -174,6 +238,42 @@ const nav = [
   border-radius: 6px;
   color: #d9e4e9;
   background: transparent;
+  cursor: pointer;
+}
+
+.ghost-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.fail-sim {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  color: #8fa5b5;
+  font-size: 11px;
+}
+
+.fail-sim select {
+  max-width: 150px;
+  padding: 4px 6px;
+  border: 1px solid #426172;
+  border-radius: 5px;
+  color: #d9e4e9;
+  background: #102231;
+  font-size: 11px;
+}
+
+.conflict-button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px solid #d8912d;
+  border-radius: 6px;
+  color: #f4c877;
+  background: rgb(216 145 45 / 12%);
   cursor: pointer;
 }
 
