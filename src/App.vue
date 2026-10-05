@@ -52,6 +52,16 @@ const nav = [
           {{ store.isOffline ? '离线草稿已保存' : '协作服务正常' }}
         </div>
         <p>版本 {{ store.revision }} · {{ store.lastSaved }}</p>
+        <div class="side-badges">
+          <span v-if="store.hasUnresolvedConflicts" class="badge danger">
+            {{ store.unresolvedConflicts.length }} 项冲突待裁决
+          </span>
+          <span v-if="store.failedBatches.length" class="badge red">
+            {{ store.failedBatches.length }} 个批次同步失败
+          </span>
+          <span v-if="store.printReview.state === 'stale'" class="badge amber">打印清单待核对</span>
+          <span v-if="store.todoReview.state === 'stale'" class="badge amber">留言待办待核对</span>
+        </div>
         <button class="ghost-button" @click="store.toggleOffline">
           {{ store.isOffline ? '恢复连接' : '模拟离线' }}
         </button>
@@ -165,6 +175,35 @@ const nav = [
   margin: 8px 0 11px;
   color: #9eb0bc;
   font-size: 11px;
+}
+
+.side-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 11px;
+}
+
+.badge {
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.badge.danger {
+  color: #ffd9d2;
+  background: rgb(207 91 63 / 22%);
+}
+
+.badge.red {
+  color: #ffd9d2;
+  background: rgb(189 75 63 / 22%);
+}
+
+.badge.amber {
+  color: #f5d9a8;
+  background: rgb(214 140 39 / 20%);
 }
 
 .ghost-button {

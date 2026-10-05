@@ -15,12 +15,20 @@ const script = computed(() =>
 )
 
 function confirmCue(id: string) {
+  if (store.conflictCueIds.has(id)) {
+    ElMessage.warning('该节点有未裁决的同步冲突，暂不能确认')
+    return
+  }
   store.selectedId = id
   store.updateCue({ status: '已确认' })
   ElMessage.success(`${id} 已并入当前排练脚本`)
 }
 
 function lock() {
+  if (store.hasUnresolvedConflicts) {
+    ElMessage.warning('存在未裁决的同步冲突，裁决完成后才能锁定基线')
+    return
+  }
   store.lockBaseline()
   ElMessage.success('演出基线已锁定，后续修改将从新分支开始')
 }
@@ -35,11 +43,26 @@ function lock() {
         <p class="muted">提示与走位按时间码串联；未确认节点不会进入锁定基线。</p>
       </div>
       <div class="actions">
-        <el-button :disabled="store.locked" @click="lock">锁定演出基线</el-button>
+        <el-tag v-if="store.hasUnresolvedConflicts" type="danger" effect="plain">
+          {{ store.unresolvedConflicts.length }} 项冲突待裁决
+        </el-tag>
+        <el-button :disabled="store.locked || store.hasUnresolvedConflicts" @click="lock">
+          {{ store.hasUnresolvedConflicts ? '冲突待裁决，无法锁定' : '锁定演出基线' }}
+        </el-button>
         <el-button v-if="store.locked" type="warning" plain @click="store.unlockBaseline">解锁修订</el-button>
         <el-button type="primary" @click="$router.push('/print')">生成执行清单</el-button>
       </div>
     </div>
+
+    <el-alert
+      v-if="store.baselineSuspended"
+      class="baseline-suspended"
+      type="warning"
+      show-icon
+      :closable="false"
+      title="存在未裁决的同步冲突，演出基线已暂缓锁定"
+      description="冲突裁决完成后可重新锁定基线；未裁完的节点不能进入演出基线。"
+    />
 
     <div class="panel script-toolbar">
       <el-input v-model="query" clearable placeholder="搜索提示、角色或说明" style="max-width: 320px" />
@@ -131,6 +154,10 @@ function lock() {
   margin-left: auto;
   color: #5e6d79;
   font-size: 12px;
+}
+
+.baseline-suspended {
+  margin-bottom: 14px;
 }
 
 .script-layout {

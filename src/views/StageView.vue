@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import { useWorkshopStore, type Cue, type Department } from '../stores/workshop'
+import { useWorkshopStore, FIELD_LABELS, type Cue, type Department, type Point } from '../stores/workshop'
 
 const store = useWorkshopStore()
 const commentText = ref('')
@@ -41,6 +42,33 @@ function submitComment() {
 
 function updateCue(key: keyof Cue, value: unknown) {
   store.updateCue({ [key]: value } as Partial<Cue>)
+}
+
+async function remoteEdit() {
+  try {
+    const result = await store.remoteEdit()
+    ElMessage.success(`同事在线修改了 ${result.cueId}：${result.description}，请同步合并`)
+  } catch {
+    ElMessage.warning('当前离线，无法模拟同事改稿')
+  }
+}
+
+function formatField(field: string, target: Cue | null): string {
+  if (!target) return '（已删除该节点）'
+  const value = (target as Record<string, unknown>)[field]
+  if (field === 'entry' || field === 'exit') {
+    const point = value as Point
+    return `(${point.x}, ${point.y})`
+  }
+  if (field === 'route') return `${(value as Point[]).length} 个节点`
+  if (field === 'duration') return `${value} 秒`
+  if (Array.isArray(value)) return `${value.length} 项`
+  return String(value ?? '—')
+}
+
+function conflictTitle(conflict: { kind: string; cueId: string }): string {
+  if (conflict.kind === 'comment') return `${conflict.cueId} · 部门留言冲突`
+  return `${conflict.cueId} · 走位冲突`
 }
 </script>
 
@@ -88,6 +116,93 @@ function updateCue(key: keyof Cue, value: unknown) {
       <el-button @click="store.addCue" :disabled="store.locked">新增提示</el-button>
       <el-tag :type="store.locked ? 'success' : 'info'" effect="plain">{{ store.locked ? '基线已锁定' : '草稿编辑中' }}</el-tag>
     </div>
+
+    <el-alert
+      v-if="store.hasUnresolvedConflicts"
+      class="conflict-alert"
+      type="error"
+      show-icon
+      :closable="false"
+      :title="`${store.unresolvedConflicts.length} 项同步冲突待裁决`"
+      description="离线期间同一走位或留言两边都做了修改，已保留两版。裁决前相关节点不能确认，演出基线不能锁定。"
+    />
+
+    <section v-if="store.unresolvedConflicts.length" class="panel conflict-panel">
+      <div class="panel-head">
+        <h3>同步冲突 · 待裁决</h3>
+        <span class="muted">未裁完不能进入演出基线</span>
+      </div>
+      <div class="conflict-list">
+        <div v-for="conflict in store.unresolvedConflicts" :key="conflict.id" class="conflict-item">
+          <div class="conflict-head">
+            <strong>{{ conflictTitle(conflict) }}</strong>
+            <span class="muted">本地与服务器都修改了同一对象</span>
+          </div>
+          <div class="conflict-diff">
+            <template v-if="conflict.kind === 'cue'">
+              <div v-for="field in conflict.fields" :key="field" class="diff-row">
+                <span class="diff-field">{{ FIELD_LABELS[field] ?? field }}</span>
+                <span class="diff-local">本地：{{ formatField(field, conflict.local) }}</span>
+                <span class="diff-remote">服务器：{{ formatField(field, conflict.remote) }}</span>
+              </div>
+            </template>
+            <template v-else>
+              <div class="diff-row">
+                <span class="diff-field">留言内容</span>
+                <span class="diff-local">本地：{{ conflict.local.content }}</span>
+                <span class="diff-remote">服务器：{{ conflict.remote.content }}</span>
+              </div>
+              <div class="diff-row">
+                <span class="diff-field">状态</span>
+                <span class="diff-local">本地：{{ conflict.local.resolved ? '已解决' : '待处理' }}</span>
+                <span class="diff-remote">服务器：{{ conflict.remote.resolved ? '已解决' : '待处理' }}</span>
+              </div>
+            </template>
+          </div>
+          <div class="conflict-actions">
+            <el-button size="small" @click="store.adjudicateConflict(conflict.id, 'local')">采用本地版</el-button>
+            <el-button size="small" type="primary" @click="store.adjudicateConflict(conflict.id, 'remote')">
+              采用服务器版
+            </el-button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel sync-panel">
+      <div class="panel-head">
+        <h3>离线同步批次</h3>
+        <div class="sync-controls">
+          <el-checkbox v-model="store.simulateResponseLoss">模拟响应丢失</el-checkbox>
+          <el-button size="small" :loading="store.syncing" @click="store.syncNow">
+            {{ store.isOffline ? '保存离线批次' : '立即同步' }}
+          </el-button>
+          <el-button size="small" :disabled="store.isOffline" @click="remoteEdit">模拟同事改稿</el-button>
+        </div>
+      </div>
+      <div v-if="!store.pendingBatches.length" class="muted empty-batches">暂无同步批次</div>
+      <div v-for="batch in store.pendingBatches" :key="batch.id" class="batch-row" :class="batch.status">
+        <div class="batch-info">
+          <strong>{{ batch.id }}</strong>
+          <span class="muted">{{ batch.createdAt }} · {{ batch.cueCount }} 个节点</span>
+        </div>
+        <div class="batch-status">
+          <el-tag v-if="batch.status === 'synced'" type="success" effect="plain" size="small">
+            {{ batch.idempotent ? '已去重' : '已同步' }}
+            <template v-if="batch.revision"> · R{{ batch.revision }}</template>
+          </el-tag>
+          <el-tag v-else-if="batch.status === 'failed'" type="danger" effect="plain" size="small">同步失败</el-tag>
+          <el-tag v-else type="info" effect="plain" size="small">待同步</el-tag>
+          <span v-if="batch.error" class="batch-error">{{ batch.error }}</span>
+        </div>
+        <div class="batch-actions">
+          <el-button v-if="batch.status === 'failed'" size="small" type="primary" @click="store.retryBatch(batch.id)">
+            重试
+          </el-button>
+          <el-button v-if="batch.status === 'synced'" size="small" @click="store.resendBatch(batch.id)">重发</el-button>
+        </div>
+      </div>
+    </section>
 
     <div class="work-grid">
       <section class="panel stage-panel">
@@ -179,6 +294,20 @@ function updateCue(key: keyof Cue, value: unknown) {
             <div class="comment-head">
               <strong>部门留言 · {{ cue.comments.filter((item) => !item.resolved).length }} 待处理</strong>
             </div>
+            <el-alert
+              v-if="store.todoReview.state === 'stale'"
+              class="review-alert"
+              type="warning"
+              show-icon
+              :closable="false"
+              :title="`留言待办已失效：${store.todoReview.reason}`"
+              description="相关节点的基线、确认状态或时间码已变更，待办需重新核对后再执行。"
+            >
+              <div class="review-actions">
+                <el-button size="small" type="primary" @click="store.recheckTodo">重新核对</el-button>
+                <span class="muted">涉及 {{ store.todoReview.affectedIds.join('、') || '全部节点' }}</span>
+              </div>
+            </el-alert>
             <div class="comment-list">
               <div v-for="comment in cue.comments" :key="comment.id" class="comment" :class="{ resolved: comment.resolved }">
                 <div>
@@ -217,6 +346,15 @@ function updateCue(key: keyof Cue, value: unknown) {
           <span>{{ item.id }} · {{ item.department }}</span>
           <strong>{{ item.title }}</strong>
           <small>{{ item.time }} · {{ item.duration }} 秒</small>
+          <el-tag
+            v-if="store.conflictCueIds.has(item.id)"
+            class="card-conflict-tag"
+            type="danger"
+            size="small"
+            effect="plain"
+          >
+            冲突待裁决
+          </el-tag>
         </button>
       </div>
     </section>
@@ -230,6 +368,135 @@ function updateCue(key: keyof Cue, value: unknown) {
 
 .conflict-alert {
   margin-bottom: 12px;
+}
+
+.conflict-panel {
+  margin-bottom: 12px;
+}
+
+.conflict-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.conflict-item {
+  padding: 12px;
+  border: 1px solid #f0d4c8;
+  border-radius: 8px;
+  background: #fdf6f2;
+}
+
+.conflict-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.conflict-diff {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.diff-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 1fr;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.diff-field {
+  color: #7a6a62;
+  font-weight: 700;
+}
+
+.diff-local {
+  color: #b05a2b;
+}
+
+.diff-remote {
+  color: #2f6fb0;
+}
+
+.conflict-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sync-panel {
+  margin-bottom: 12px;
+}
+
+.sync-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.empty-batches {
+  padding: 16px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.batch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid #eef2f4;
+}
+
+.batch-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.batch-info strong {
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+}
+
+.batch-info span {
+  font-size: 11px;
+}
+
+.batch-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.batch-error {
+  color: #bd4b3f;
+  font-size: 11px;
+}
+
+.batch-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.review-alert {
+  margin-bottom: 10px;
+}
+
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.card-conflict-tag {
+  margin-top: 6px;
 }
 
 .toolbar {

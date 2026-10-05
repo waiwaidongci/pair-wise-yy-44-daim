@@ -46,8 +46,8 @@ function exportCsv() {
         <p class="muted">打印版仅包含已选信息，固定 A4 横向布局，适合舞台监督工作台使用。</p>
       </div>
       <div class="actions">
-        <el-button @click="exportCsv">导出 CSV</el-button>
-        <el-button type="primary" @click="print">打印 / 导出 PDF</el-button>
+        <el-button @click="exportCsv" :disabled="store.printReview.state === 'stale'">导出 CSV</el-button>
+        <el-button type="primary" @click="print" :disabled="store.printReview.state === 'stale'">打印 / 导出 PDF</el-button>
       </div>
     </div>
 
@@ -56,10 +56,31 @@ function exportCsv() {
       <el-checkbox v-model="includeNotes">执行说明</el-checkbox>
       <el-checkbox v-model="includeRoutes">路线坐标</el-checkbox>
       <el-checkbox v-model="includeComments">未解决留言</el-checkbox>
-      <span class="print-revision">版本 {{ store.revision }} · 生成于 {{ new Date().toLocaleString('zh-CN') }}</span>
+      <span class="print-revision">
+        版本 {{ store.revision }} ·
+        <template v-if="store.printReview.state === 'valid'">
+          已核对 {{ store.printReview.checkedAt ? new Date(store.printReview.checkedAt).toLocaleString('zh-CN') : '' }}
+        </template>
+        <template v-else>待重新核对</template>
+      </span>
     </div>
 
-    <article class="print-sheet">
+    <el-alert
+      v-if="store.printReview.state === 'stale'"
+      class="review-alert no-print"
+      type="warning"
+      show-icon
+      :closable="false"
+      :title="`打印清单已失效：${store.printReview.reason}`"
+      :description="`受影响节点：${store.printReview.affectedIds.join('、') || '全部'}。清单内容已与当前基线、确认状态或时间码不一致，请重新核对后再打印。`"
+    >
+      <div class="review-actions">
+        <el-button size="small" type="primary" @click="store.recheckPrint">重新核对</el-button>
+        <span class="muted">核对通过后才能打印或导出</span>
+      </div>
+    </el-alert>
+
+    <article class="print-sheet" :class="{ 'is-stale': store.printReview.state === 'stale' }">
       <header class="sheet-head">
         <div>
           <span>远岸剧团 · STAGE MANAGEMENT</span>
@@ -126,6 +147,21 @@ function exportCsv() {
   margin-left: auto;
   color: #74818c;
   font-size: 12px;
+}
+
+.review-alert {
+  margin-bottom: 14px;
+}
+
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.print-sheet.is-stale {
+  opacity: 0.6;
 }
 
 .print-sheet {
